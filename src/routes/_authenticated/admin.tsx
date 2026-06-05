@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -16,7 +16,16 @@ export const Route = createFileRoute("/_authenticated/admin")({
   component: AdminHome,
 });
 
+// Router wrapper: render child routes (orders / inventory) via Outlet,
+// or render the hub when the path is exactly /admin.
 function AdminHome() {
+  const { pathname } = useLocation();
+  if (pathname !== "/admin") return <Outlet />;
+  return <AdminHub />;
+}
+
+// All hooks live here so they are always called in the same order.
+function AdminHub() {
   const qc = useQueryClient();
   const promote = useServerFn(promoteSelfToAdmin);
   const [checking, setChecking] = useState(true);
@@ -119,9 +128,7 @@ function AdminHome() {
   }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const ordersToday = activeOrders.filter(
-    (o) => new Date(o.created_at) >= today,
-  );
+  const ordersToday = activeOrders.filter((o) => new Date(o.created_at) >= today);
   const revenue = ordersToday.reduce((s, o) => s + Number(o.total_amount), 0);
 
   const CATS = ["base", "sauce", "cheese", "veggie", "meat"] as const;
@@ -199,7 +206,7 @@ function AdminHome() {
           </Link>
         </div>
 
-        {/* Inventory quick view */}
+        {/* Inventory at a glance */}
         <div className="mt-8">
           <h2 className="mb-3 font-display text-xl">Inventory at a glance</h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
