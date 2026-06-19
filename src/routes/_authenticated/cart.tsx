@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,20 +46,6 @@ function CartPage() {
   const [step, setStep] = useState<PayStep>("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
-        const { data: p } = await supabase
-          .from("profiles").select("*").eq("id", data.user.id).maybeSingle();
-        if (p) {
-          setName((p as any).full_name ?? "");
-          setPhone((p as any).phone ?? "");
-          setAddress((p as any).address ?? "");
-        }
-      }
-    });
-  }, []);
-
   const total = items.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
   const paying = step !== "idle" && step !== "error";
 
@@ -102,9 +87,6 @@ function CartPage() {
         const msg = (e as Error).message ?? String(e);
         if (msg.includes("keys not configured") || msg.includes("RAZORPAY")) {
           throw new Error("Razorpay is not configured. Ask the admin to add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to the Vercel environment variables.");
-        }
-        if (msg.includes("Unauthorized") || msg.includes("auth")) {
-          throw new Error("Session expired. Please refresh the page and log in again.");
         }
         throw new Error(`Order creation failed: ${msg}`);
       }

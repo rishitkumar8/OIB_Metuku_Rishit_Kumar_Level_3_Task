@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const cartItemSchema = z.object({
   pizza_name: z.string().min(1).max(100),
@@ -13,9 +13,7 @@ const cartItemSchema = z.object({
   price: z.number().min(0).max(1000),
 });
 
-// ---- Razorpay: create an order on Razorpay ----
 export const createRazorpayOrder = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ amount: z.number().min(1).max(1_000_000) }))
   .handler(async ({ data }) => {
     const keyId = process.env.RAZORPAY_KEY_ID;
@@ -45,9 +43,7 @@ export const createRazorpayOrder = createServerFn({ method: "POST" })
     return { orderId: order.id, amount: order.amount, currency: order.currency, keyId };
   });
 
-// ---- Place order: verifies Razorpay signature, then writes order + items ----
 export const placeOrder = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
       items: z.array(cartItemSchema).min(1).max(20),
@@ -60,12 +56,11 @@ export const placeOrder = createServerFn({ method: "POST" })
       razorpay_signature: z.string().min(1).max(200),
     }),
   )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    // Verify signature
+  .handler(async ({ data }) => {
+    const supabase = supabaseAdmin as any;
     const secret = process.env.RAZORPAY_KEY_SECRET;
     if (!secret) throw new Error("Razorpay not configured");
+
     const { createHmac, timingSafeEqual } = await import("crypto");
     const expected = createHmac("sha256", secret)
       .update(`${data.razorpay_order_id}|${data.razorpay_payment_id}`)
@@ -79,7 +74,6 @@ export const placeOrder = createServerFn({ method: "POST" })
     const { data: order, error: orderErr } = await supabase
       .from("orders")
       .insert({
-        user_id: userId,
         total_amount: data.total_amount,
         delivery_address: data.delivery_address,
         phone: data.phone,
@@ -95,11 +89,9 @@ export const placeOrder = createServerFn({ method: "POST" })
     const itemRows = data.items.map((i) => ({ ...i, order_id: order.id }));
     const { error: itemsErr } = await supabase.from("order_items").insert(itemRows);
     if (itemsErr) {
-      // Surface friendly stock errors
       const msg = itemsErr.message || "";
       if (msg.includes("OUT_OF_STOCK")) {
         const name = msg.split("OUT_OF_STOCK:")[1]?.trim() ?? "an item";
-        // Rollback order
         await supabase.from("orders").delete().eq("id", order.id);
         throw new Error(`Sorry, "${name}" is running low and can't be ordered right now.`);
       }
@@ -117,25 +109,14 @@ export const placeOrder = createServerFn({ method: "POST" })
   });
 
 export const updateOrderStatus = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
       orderId: z.string().uuid(),
       status: z.enum(["received", "in_kitchen", "sent_to_delivery", "delivered"]),
     }),
   )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    const { data: roleRow } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .eq("role", "admin")
-      .maybeSingle();
-    if (!roleRow) throw new Error("Forbidden: admin only");
-
-    // When marking delivered, hide from admin list but keep in user history.
+  .handler(async ({ data }) => {
+    const supabase = supabaseAdmin as any;
     const patch =
       data.status === "delivered"
         ? { status: data.status, archived_for_admin: true }
@@ -143,40 +124,5 @@ export const updateOrderStatus = createServerFn({ method: "POST" })
 
     const { error } = await supabase.from("orders").update(patch).eq("id", data.orderId);
     if (error) throw new Error(error.message);
-    return { ok: true };
-  });
-
-export const getMyRole = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    const roles = (data ?? []).map((r) => r.role);
-    return { roles, isAdmin: roles.includes("admin") };
-  });
-
-export const promoteSelfToAdmin = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { count } = await supabaseAdmin
-      .from("user_roles")
-      .select("*", { count: "exact", head: true })
-      .eq("role", "admin");
-    if ((count ?? 0) > 0) {
-      const { data: existing } = await supabaseAdmin
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", context.userId)
-        .eq("role", "admin")
-        .maybeSingle();
-      if (!existing) throw new Error("Admin already exists. Ask an admin to grant you access.");
-    }
-    await supabaseAdmin
-      .from("user_roles")
-      .upsert({ user_id: context.userId, role: "admin" }, { onConflict: "user_id,role" });
     return { ok: true };
   });

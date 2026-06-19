@@ -1,51 +1,28 @@
 import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminHeader } from "@/components/AdminHeader";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
-import { promoteSelfToAdmin } from "@/lib/orders.functions";
-import { ClipboardList, Boxes, TrendingUp, AlertTriangle, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Boxes, ClipboardList, TrendingUp } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/admin")({
-  head: () => ({ meta: [{ title: "Admin — Forno" }] }),
+  head: () => ({ meta: [{ title: "Admin - Forno" }] }),
   component: AdminHome,
 });
 
-// Router wrapper: render child routes (orders / inventory) via Outlet,
-// or render the hub when the path is exactly /admin.
 function AdminHome() {
   const { pathname } = useLocation();
   if (pathname !== "/admin") return <Outlet />;
   return <AdminHub />;
 }
 
-// All hooks live here so they are always called in the same order.
 function AdminHub() {
   const qc = useQueryClient();
-  const promote = useServerFn(promoteSelfToAdmin);
-  const [checking, setChecking] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
-        const { data: r } = await supabase
-          .from("user_roles").select("role")
-          .eq("user_id", data.user.id).eq("role", "admin").maybeSingle();
-        setIsAdmin(!!r);
-      }
-      setChecking(false);
-    });
-  }, []);
 
   const { data: activeOrders = [] } = useQuery({
     queryKey: ["admin-active-orders-count"],
-    enabled: isAdmin,
     queryFn: async () => {
       const { data } = await supabase
         .from("orders")
@@ -59,7 +36,6 @@ function AdminHub() {
 
   const { data: lowStock = [] } = useQuery({
     queryKey: ["low-stock"],
-    enabled: isAdmin,
     queryFn: async () => {
       const { data } = await supabase
         .from("inventory_items")
@@ -72,7 +48,6 @@ function AdminHub() {
 
   const { data: inventorySummary = [] } = useQuery({
     queryKey: ["inventory-summary"],
-    enabled: isAdmin,
     queryFn: async () => {
       const { data } = await supabase
         .from("inventory_items")
@@ -82,7 +57,6 @@ function AdminHub() {
   });
 
   useEffect(() => {
-    if (!isAdmin) return;
     const ch = supabase.channel("admin-home-stream")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
         qc.invalidateQueries({ queryKey: ["admin-active-orders-count"] });
@@ -93,46 +67,15 @@ function AdminHub() {
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [isAdmin, qc]);
+  }, [qc]);
 
-  if (checking) return <div className="p-10 text-center text-muted-foreground">Loading…</div>;
-
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen">
-        <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-8 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <ShieldCheck className="h-8 w-8 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-display text-3xl">Admin access required</h1>
-            <p className="mt-2 text-muted-foreground">
-              You are not registered as an admin. The first user can claim admin to set up the system.
-            </p>
-          </div>
-          <Button
-            onClick={async () => {
-              try {
-                await promote();
-                toast.success("You are now an admin");
-                qc.invalidateQueries();
-                setIsAdmin(true);
-              } catch (e) { toast.error((e as Error).message); }
-            }}
-          >
-            Claim admin (first user only)
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const ordersToday = activeOrders.filter((o) => new Date(o.created_at) >= today);
   const revenue = ordersToday.reduce((s, o) => s + Number(o.total_amount), 0);
 
-  const CATS = ["base", "sauce", "cheese", "veggie", "meat"] as const;
-  const catStats = CATS.map((c) => {
+  const cats = ["base", "sauce", "cheese", "veggie", "meat"] as const;
+  const catStats = cats.map((c) => {
     const items = inventorySummary.filter((i) => i.category === c && i.active);
     return {
       c,
@@ -151,10 +94,9 @@ function AdminHub() {
           <p className="mt-1 text-muted-foreground">Manage orders and kitchen inventory from here.</p>
         </div>
 
-        {/* Stats bar */}
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard icon={<ClipboardList className="h-5 w-5" />} label="Active orders" value={activeOrders.length} />
-          <StatCard icon={<TrendingUp className="h-5 w-5" />} label="Revenue today" value={`₹${revenue.toFixed(2)}`} />
+          <StatCard icon={<TrendingUp className="h-5 w-5" />} label="Revenue today" value={`Rs ${revenue.toFixed(2)}`} />
           <StatCard
             icon={<AlertTriangle className="h-5 w-5" />}
             label="Low / out of stock"
@@ -163,7 +105,6 @@ function AdminHub() {
           />
         </div>
 
-        {/* Primary action cards */}
         <div className="mt-8 grid gap-6 md:grid-cols-2">
           <Link to="/admin/orders">
             <Card className="group cursor-pointer border-2 border-transparent transition-all hover:border-primary hover:shadow-lg">
@@ -178,9 +119,9 @@ function AdminHub() {
                 </div>
                 <h2 className="mt-4 font-display text-2xl">Order Queue</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  View all incoming orders and update their status — Received → In Kitchen → Out for Delivery → Delivered.
+                  View incoming orders and update their delivery status.
                 </p>
-                <div className="mt-4 text-sm font-medium text-primary group-hover:underline">Manage orders →</div>
+                <div className="mt-4 text-sm font-medium text-primary group-hover:underline">Manage orders</div>
               </CardContent>
             </Card>
           </Link>
@@ -198,15 +139,14 @@ function AdminHub() {
                 </div>
                 <h2 className="mt-4 font-display text-2xl">Inventory</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Stock and unstock pizza bases, sauces, cheese, veggies, and meats. Keep track of available ingredients.
+                  Stock and unstock pizza bases, sauces, cheese, veggies, and meats.
                 </p>
-                <div className="mt-4 text-sm font-medium text-primary group-hover:underline">Manage inventory →</div>
+                <div className="mt-4 text-sm font-medium text-primary group-hover:underline">Manage inventory</div>
               </CardContent>
             </Card>
           </Link>
         </div>
 
-        {/* Inventory at a glance */}
         <div className="mt-8">
           <h2 className="mb-3 font-display text-xl">Inventory at a glance</h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -226,7 +166,6 @@ function AdminHub() {
           </div>
         </div>
 
-        {/* Low stock alerts */}
         {lowStock.length > 0 && (
           <Card className="mt-6 border-destructive/30">
             <CardContent className="p-5">
@@ -237,8 +176,9 @@ function AdminHub() {
               <ul className="mt-3 space-y-2">
                 {lowStock.map((i) => (
                   <li key={i.id} className="flex items-center justify-between rounded-md border p-3 text-sm">
-                    <span className="font-medium">{i.name}
-                      <span className="ml-2 text-xs text-muted-foreground capitalize">({i.category})</span>
+                    <span className="font-medium">
+                      {i.name}
+                      <span className="ml-2 text-xs capitalize text-muted-foreground">({i.category})</span>
                     </span>
                     <Badge variant={i.stock === 0 ? "destructive" : "outline"}>
                       {i.stock === 0 ? "Out of stock" : `${i.stock} left (min ${i.threshold})`}
@@ -247,7 +187,9 @@ function AdminHub() {
                 ))}
               </ul>
               <Link to="/admin/inventory">
-                <Button size="sm" variant="outline" className="mt-3">Go to Inventory</Button>
+                <span className="mt-3 inline-flex rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted">
+                  Go to Inventory
+                </span>
               </Link>
             </CardContent>
           </Card>
